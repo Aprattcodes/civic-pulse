@@ -1,8 +1,10 @@
 'use client';
 
 import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
-import mapboxgl from 'mapbox-gl';
+import * as mapboxgl from 'mapbox-gl';
+import MapboxGeocoder from '@mapbox/mapbox-gl-geocoder';
 import 'mapbox-gl/dist/mapbox-gl.css';
+import '@mapbox/mapbox-gl-geocoder/dist/mapbox-gl-geocoder.css';
 import { supabase, type Comment, type Theme } from '@/lib/supabase';
 
 // ─── Theme configuration ─────────────────────────────────────────────────────
@@ -44,7 +46,7 @@ function buildMarkerElement(comment: Comment): HTMLButtonElement {
   const el = document.createElement('button');
   el.className = 'civic-marker';
   el.setAttribute('aria-label', label);
-  el.setAttribute('title', label);
+  // No title attribute — hover tooltip replaced by click modal
   el.textContent = initial;
   el.style.setProperty('--marker-color', color);
   return el;
@@ -59,23 +61,39 @@ export interface MapHandle {
 interface MapProps {
   onLocationSelect: (lat: number, lng: number) => void;
   pendingLocation: { lat: number; lng: number } | null;
+  onMarkerClick: (comment: Comment, el: HTMLButtonElement) => void;
 }
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
 const Map = forwardRef<MapHandle, MapProps>(function Map(
-  { onLocationSelect, pendingLocation },
+  { onLocationSelect, pendingLocation, onMarkerClick },
   ref,
 ) {
-  const containerRef    = useRef<HTMLDivElement>(null);
-  const mapRef          = useRef<mapboxgl.Map | null>(null);
+  const containerRef     = useRef<HTMLDivElement>(null);
+  const mapRef           = useRef<mapboxgl.Map | null>(null);
   const pendingMarkerRef = useRef<mapboxgl.Marker | null>(null);
 
-  // Keep callback ref current so the map click handler never captures a stale closure
+  // Keep callback refs current so map event handlers never capture stale closures
   const onLocationSelectRef = useRef(onLocationSelect);
   useEffect(() => {
     onLocationSelectRef.current = onLocationSelect;
   }, [onLocationSelect]);
+
+  const onMarkerClickRef = useRef(onMarkerClick);
+  useEffect(() => {
+    onMarkerClickRef.current = onMarkerClick;
+  }, [onMarkerClick]);
+
+  // Attach click listener to a marker element, calling onMarkerClick with comment + element
+  function attachMarkerClick(el: HTMLButtonElement, comment: Comment) {
+    el.addEventListener('click', (e) => {
+      // Stop propagation so the event doesn't bubble to the map container.
+      // map.on('click') only fires for canvas clicks, but this is belt-and-suspenders.
+      e.stopPropagation();
+      onMarkerClickRef.current(comment, el);
+    });
+  }
 
   // Expose addMarker imperatively so MapContainer can push a new marker after save
   useImperativeHandle(ref, () => ({
@@ -83,6 +101,7 @@ const Map = forwardRef<MapHandle, MapProps>(function Map(
       const map = mapRef.current;
       if (!map) return;
       const el = buildMarkerElement(comment);
+      attachMarkerClick(el, comment);
       new mapboxgl.Marker({ element: el })
         .setLngLat([comment.longitude, comment.latitude])
         .addTo(map);
@@ -99,13 +118,12 @@ const Map = forwardRef<MapHandle, MapProps>(function Map(
       return;
     }
 
-    mapboxgl.accessToken = token;
-
     const map = new mapboxgl.Map({
-      container: containerRef.current,
-      style:     'mapbox://styles/mapbox/streets-v12',
-      center:    [-98.5795, 39.8283],
-      zoom:      4,
+      accessToken: token,
+      container:   containerRef.current,
+      style:        'mapbox://styles/mapbox/streets-v12',
+      center:       [-98.5795, 39.8283],
+      zoom:         4,
     });
 
     mapRef.current = map;
@@ -115,7 +133,17 @@ const Map = forwardRef<MapHandle, MapProps>(function Map(
       'top-right',
     );
 
-    // Drop a pin wherever the user clicks
+    // Geocoder — positioned top-left, keyboard accessible by default
+    map.addControl(
+      new MapboxGeocoder({
+        accessToken: token,
+        mapboxgl,
+        placeholder: 'Search for a location…',
+      }),
+      'top-left',
+    );
+
+    // Drop a pin wherever the user clicks the map canvas
     map.on('click', (e) => {
       onLocationSelectRef.current(e.lngLat.lat, e.lngLat.lng);
     });
@@ -138,6 +166,7 @@ const Map = forwardRef<MapHandle, MapProps>(function Map(
 
       (comments as Comment[]).forEach((comment) => {
         const el = buildMarkerElement(comment);
+        attachMarkerClick(el, comment);
         new mapboxgl.Marker({ element: el })
           .setLngLat([comment.longitude, comment.latitude])
           .addTo(map);

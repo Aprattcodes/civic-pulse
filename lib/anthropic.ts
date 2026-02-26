@@ -25,30 +25,40 @@ Other
 
 Choose the most relevant theme. If nothing fits, respond with: Other`;
 
-const apiKey = process.env.ANTHROPIC_API_KEY;
+// Lazy singleton — initialised on first call so any missing-key error is thrown
+// inside classifyComment where the route's try/catch can catch it.
+let _client: Anthropic | null = null;
 
-if (!apiKey) {
-  throw new Error('Missing environment variable: ANTHROPIC_API_KEY must be set.');
+function getClient(): Anthropic {
+  if (!_client) {
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!apiKey) {
+      throw new Error('ANTHROPIC_API_KEY environment variable is not set.');
+    }
+    _client = new Anthropic({ apiKey });
+  }
+  return _client;
 }
 
-const client = new Anthropic({ apiKey });
-
 export async function classifyComment(commentText: string): Promise<Theme> {
+  const client = getClient();
+
   const message = await client.messages.create({
-    model: 'claude-haiku-4-5-20251001',
+    model:      'claude-haiku-4-5-20251001',
     max_tokens: 16,
-    system: SYSTEM_PROMPT,
-    messages: [{ role: 'user', content: commentText }],
+    system:     SYSTEM_PROMPT,
+    messages:   [{ role: 'user', content: commentText }],
   });
 
+  // Explicit type predicate so TypeScript narrows correctly inside .map()
   const raw = message.content
-    .filter((block) => block.type === 'text')
+    .filter((block): block is Anthropic.TextBlock => block.type === 'text')
     .map((block) => block.text)
     .join('')
     .trim();
 
   const matched = VALID_THEMES.find(
-    (theme) => theme.toLowerCase() === raw.toLowerCase()
+    (theme) => theme.toLowerCase() === raw.toLowerCase(),
   );
 
   return matched ?? 'Other';

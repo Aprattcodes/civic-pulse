@@ -18,7 +18,7 @@ export async function POST(req: NextRequest) {
   ) {
     return NextResponse.json(
       { error: 'Request body must include a "comment_text" string field.' },
-      { status: 422 }
+      { status: 422 },
     );
   }
 
@@ -27,14 +27,14 @@ export async function POST(req: NextRequest) {
   if (commentText.length === 0) {
     return NextResponse.json(
       { error: '"comment_text" must not be empty.' },
-      { status: 422 }
+      { status: 422 },
     );
   }
 
   if (commentText.length > 2000) {
     return NextResponse.json(
       { error: '"comment_text" must be 2000 characters or fewer.' },
-      { status: 422 }
+      { status: 422 },
     );
   }
 
@@ -42,10 +42,21 @@ export async function POST(req: NextRequest) {
     const theme = await classifyComment(commentText);
     return NextResponse.json({ theme });
   } catch (err) {
-    console.error('[/api/classify] Anthropic error:', err);
+    // Log everything available so the full cause is visible in the server console
+    const message = err instanceof Error ? err.message : String(err);
+    const status  = (err as { status?: number }).status;
+    const headers = (err as { headers?: unknown }).headers;
+
+    console.error('[/api/classify] Classification error:', {
+      message,
+      status,
+      headers,
+      stack: err instanceof Error ? err.stack : undefined,
+    });
+
     return NextResponse.json(
-      { error: 'Classification failed. Please try again.' },
-      { status: 502 }
+      { error: `Classification failed: ${message}` },
+      { status: 502 },
     );
   }
 }

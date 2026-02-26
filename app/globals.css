@@ -26,6 +26,30 @@ body {
   font-family: Arial, Helvetica, sans-serif;
 }
 
+/* Mapbox pending marker — shown while the submission form is open */
+.civic-marker-pending {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background-color: white;
+  border: 2px dashed #6b7280;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #6b7280;
+  font-size: 14px;
+  font-weight: 700;
+  font-family: inherit;
+  line-height: 1;
+  padding: 0;
+  animation: civic-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes civic-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(107, 114, 128, 0.45); }
+  50%       { box-shadow: 0 0 0 7px rgba(107, 114, 128, 0); }
+}
+
 /* Mapbox theme markers — color set via --marker-color CSS custom property */
 .civic-marker {
   width: 28px;

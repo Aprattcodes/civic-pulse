@@ -70,9 +70,10 @@ const Map = forwardRef<MapHandle, MapProps>(function Map(
   { onLocationSelect, pendingLocation, onMarkerClick },
   ref,
 ) {
-  const containerRef     = useRef<HTMLDivElement>(null);
-  const mapRef           = useRef<mapboxgl.Map | null>(null);
-  const pendingMarkerRef = useRef<mapboxgl.Marker | null>(null);
+  const containerRef       = useRef<HTMLDivElement>(null);
+  const mapRef             = useRef<mapboxgl.Map | null>(null);
+  const pendingMarkerRef   = useRef<mapboxgl.Marker | null>(null);
+  const locallyAddedIds    = useRef<Set<string>>(new Set());
 
   // Keep callback refs current so map event handlers never capture stale closures
   const onLocationSelectRef = useRef(onLocationSelect);
@@ -100,6 +101,8 @@ const Map = forwardRef<MapHandle, MapProps>(function Map(
     addMarker(comment: Comment) {
       const map = mapRef.current;
       if (!map) return;
+      // Record this ID so the realtime subscription skips the duplicate
+      locallyAddedIds.current.add(comment.id);
       const el = buildMarkerElement(comment);
       attachMarkerClick(el, comment);
       new mapboxgl.Marker({ element: el })
@@ -173,7 +176,27 @@ const Map = forwardRef<MapHandle, MapProps>(function Map(
       });
     });
 
+    // Real-time: add a marker whenever any client inserts a new comment
+    const channel = supabase
+      .channel('comments-inserts')
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'comments' },
+        (payload) => {
+          const newComment = payload.new as Comment;
+          // Skip if this client already added the marker via addMarker()
+          if (locallyAddedIds.current.has(newComment.id)) return;
+          const el = buildMarkerElement(newComment);
+          attachMarkerClick(el, newComment);
+          new mapboxgl.Marker({ element: el })
+            .setLngLat([newComment.longitude, newComment.latitude])
+            .addTo(map);
+        },
+      )
+      .subscribe();
+
     return () => {
+      supabase.removeChannel(channel);
       map.remove();
       mapRef.current = null;
     };

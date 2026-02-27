@@ -12,6 +12,9 @@ export default function MapContainer() {
   const [pendingLocation, setPendingLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [selectedComment, setSelectedComment] = useState<Comment | null>(null);
   const triggerElRef = useRef<HTMLButtonElement | null>(null);
+  // Stores upvote counts that have changed since the marker closure was created,
+  // so reopening a modal always shows the latest count.
+  const upvoteOverridesRef = useRef<Record<string, number>>({});
 
   const handleLocationSelect = useCallback((lat: number, lng: number) => {
     setPendingLocation({ lat, lng });
@@ -28,7 +31,17 @@ export default function MapContainer() {
 
   const handleMarkerClick = useCallback((comment: Comment, el: HTMLButtonElement) => {
     triggerElRef.current = el;
-    setSelectedComment(comment);
+    const override = upvoteOverridesRef.current[comment.id];
+    setSelectedComment(
+      override !== undefined ? { ...comment, upvotes: override } : comment,
+    );
+  }, []);
+
+  const handleUpvoteSuccess = useCallback((commentId: string, newCount: number) => {
+    upvoteOverridesRef.current[commentId] = newCount;
+    setSelectedComment((prev) =>
+      prev?.id === commentId ? { ...prev, upvotes: newCount } : prev,
+    );
   }, []);
 
   const handleModalClose = useCallback(() => {
@@ -56,6 +69,7 @@ export default function MapContainer() {
           comment={selectedComment}
           onClose={handleModalClose}
           triggerEl={triggerElRef.current}
+          onUpvoteSuccess={handleUpvoteSuccess}
         />
       )}
     </div>

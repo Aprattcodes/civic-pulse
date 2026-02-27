@@ -1,7 +1,27 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
-import type { Comment, Theme } from '@/lib/supabase';
+import { useEffect, useRef, useState } from 'react';
+import { supabase, type Comment, type Theme } from '@/lib/supabase';
+
+const UPVOTED_KEY = 'civic-pulse-upvoted';
+
+function getUpvotedIds(): Set<string> {
+  if (typeof window === 'undefined') return new Set();
+  try {
+    const raw = localStorage.getItem(UPVOTED_KEY);
+    return new Set(raw ? (JSON.parse(raw) as string[]) : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function persistUpvotedIds(ids: Set<string>): void {
+  try {
+    localStorage.setItem(UPVOTED_KEY, JSON.stringify(Array.from(ids)));
+  } catch {
+    // localStorage unavailable — silently continue
+  }
+}
 
 // ─── Theme configuration (mirrors Map.tsx) ───────────────────────────────────
 
@@ -22,13 +42,18 @@ interface Props {
   comment: Comment;
   onClose: () => void;
   triggerEl: HTMLButtonElement | null;
+  onUpvoteSuccess: (commentId: string, newCount: number) => void;
 }
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
-export default function CommentModal({ comment, onClose, triggerEl }: Props) {
+export default function CommentModal({ comment, onClose, triggerEl, onUpvoteSuccess }: Props) {
   const modalRef   = useRef<HTMLDivElement>(null);
   const closeRef   = useRef<HTMLButtonElement>(null);
+
+  const [upvoteCount, setUpvoteCount] = useState(comment.upvotes ?? 0);
+  const [hasVoted, setHasVoted]       = useState(() => getUpvotedIds().has(comment.id));
+  const [isUpvoting, setIsUpvoting]   = useState(false);
 
   // Capture the trigger element once at mount so focus returns correctly on unmount
   const returnFocusRef = useRef(triggerEl);
@@ -80,6 +105,40 @@ export default function CommentModal({ comment, onClose, triggerEl }: Props) {
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [onClose]);
+
+  async function handleUpvote() {
+    if (hasVoted || isUpvoting) return;
+
+    const nextCount = upvoteCount + 1;
+
+    // Optimistic update
+    setUpvoteCount(nextCount);
+    setHasVoted(true);
+    setIsUpvoting(true);
+
+    // Persist to localStorage immediately so a page refresh keeps the voted state
+    const ids = getUpvotedIds();
+    ids.add(comment.id);
+    persistUpvotedIds(ids);
+
+    const { error } = await supabase
+      .from('comments')
+      .update({ upvotes: nextCount })
+      .eq('id', comment.id);
+
+    if (error) {
+      console.error('[CommentModal] Upvote failed:', error.message);
+      // Roll back optimistic update
+      setUpvoteCount(upvoteCount);
+      setHasVoted(false);
+      ids.delete(comment.id);
+      persistUpvotedIds(ids);
+    } else {
+      onUpvoteSuccess(comment.id, nextCount);
+    }
+
+    setIsUpvoting(false);
+  }
 
   const theme = comment.theme ?? 'Other';
   const color = THEME_COLOR[theme] ?? THEME_COLOR['Other'];
@@ -147,9 +206,35 @@ export default function CommentModal({ comment, onClose, triggerEl }: Props) {
             </div>
             <div>
               <dt className="sr-only">Upvotes</dt>
-              <dd aria-label={`${comment.upvotes ?? 0} upvote${(comment.upvotes ?? 0) === 1 ? '' : 's'}`}>
-                <span aria-hidden="true" className="mr-1">▲</span>
-                {comment.upvotes ?? 0}
+              <dd>
+                <button
+                  onClick={handleUpvote}
+                  disabled={hasVoted || isUpvoting}
+                  aria-label={
+                    hasVoted
+                      ? `Already upvoted, currently ${upvoteCount} vote${upvoteCount === 1 ? '' : 's'}`
+                      : `Upvote this comment, currently ${upvoteCount} vote${upvoteCount === 1 ? '' : 's'}`
+                  }
+                  aria-pressed={hasVoted}
+                  className={[
+                    'flex items-center gap-1 rounded px-2 py-0.5 text-sm font-medium transition-colors',
+                    'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500',
+                    hasVoted
+                      ? 'text-blue-600 bg-blue-50 cursor-default'
+                      : 'text-gray-500 hover:text-blue-600 hover:bg-blue-50 cursor-pointer',
+                  ].join(' ')}
+                >
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    viewBox="0 0 20 20"
+                    fill="currentColor"
+                    className="w-4 h-4 flex-shrink-0"
+                    aria-hidden="true"
+                  >
+                    <path d="M1 8.25a1.25 1.25 0 1 1 2.5 0v7.5a1.25 1.25 0 0 1-2.5 0v-7.5ZM11 3V1.7c0-.268.14-.526.395-.607A2 2 0 0 1 14 3c0 .995-.182 1.948-.514 2.826-.204.54.166 1.174.744 1.174h2.52c1.243 0 2.261 1.01 2.146 2.247a23.864 23.864 0 0 1-1.341 5.974C17.153 16.323 16.072 17 14.9 17h-3.192a3 3 0 0 1-1.341-.317l-2.734-1.366A3 3 0 0 0 6.292 15H5V8h.963c.685 0 1.258-.483 1.612-1.068a4.011 4.011 0 0 1 2.166-1.73c.432-.143.853-.386 1.011-.814.16-.432.248-.9.248-1.388Z" />
+                  </svg>
+                  {upvoteCount}
+                </button>
               </dd>
             </div>
           </dl>
